@@ -1,19 +1,4 @@
-#' Install any missing package
-#'
-#' @return
-#' @export
-#'
-#' @examples
-freeze <- function() {
-    package_mat <- installed.packages()[,c("Package","Version","LibPath")]
-    requirement_lst <- apply(package_mat, 1, function(pp) {
-    paste(paste0(pp["Package"],"==",pp["Version"]),pp["LibPath"],sep="\t")
-    })
 
-    rootDir = dirname(funr::sys.script())
-    requirements <- unique(unname(sort(unlist(requirement_lst))))
-    write.table(requirements,glue::glue("{rootDir}/R.freeze.txt"),quote=F,row.names=F,col.names=F)
-}
 
 
 installMissingPkg <- function(...){
@@ -66,7 +51,6 @@ checkPackages <- function(){
   )
   
   suppressPackageStartupMessages(using(requiredPackages, character.only=TRUE))
-  #freeze()  
 }
 
 prepareFolders <- function(outDir){
@@ -267,156 +251,168 @@ plotCorrelatedInteractions <- function(config, DEG_pareto_res, correlationType= 
 
   corr_plots = DEG_pareto_res %>%
     imap(.f = function(lst,cmp){
-      df = lst[['Combined_zScores']]
-      colnames(df)[2] = "Combined_zscore"
+      allGenesRes = lst[['Combined_zScores']]
 
-      df$Text = glue::glue("\nGene: {df$gene}\nRegion: {df$Region}\n Distance To TSS: {prettyNum(df$distanceToTSS,big.mark = ',')}bp")
+      pos_db_fc = grep("DB_fc_", colnames(allGenesRes))
       
-      col = grep("DB_fc", colnames(df),value = TRUE)
-      col = grep('zscore',col,invert = TRUE,value = TRUE)
+      plts = list()
+      for(DB_col in pos_db_fc){
 
-      
+        cmp_rel = gsub("DB_fc_","",colnames(allGenesRes)[DB_col])
+        cli::cli_h3(cmp_rel)
 
-      if(correlationType == "correlated"){
-        upRelation = subset(df, Relationship == "Both Up")
-        downRelation = subset(df, Relationship == "Both Down")  
-      }
+        df = allGenesRes %>% dplyr::select("Region","gene","distanceToTSS", "DE_FC", "DE_FC.zscore", contains(cmp_rel))
 
-      if(correlationType == "anticorrelated"){
-        upRelation = subset(df, Relationship == "RNA_Up CR_Down")
-        downRelation = subset(df, Relationship == "RNA_Down CR_Up")
-      }
+        colnames(df)[grep("Combined",colnames(df),ignore.case = TRUE)] = "Combined_zscore"
+        colnames(df)[grep("Relationship",colnames(df),ignore.case = TRUE)] = "Relationship"
 
-      if(correlationType == "all"){
-
-        upRelation = subset(df, Relationship == "Both Up")
-        downRelation = subset(df, Relationship == "Both Down")  
-
-        upAntiRelation = subset(df, Relationship == "RNA_Up CR_Down" )
-        downAntiRelation = subset(df, Relationship == "RNA_Down CR_Up")
-      }
-      
-      
-      top_up = upRelation %>%
-        arrange(-abs(Combined_zscore)) %>%
-        head(n=10)
-      
-      top_down = downRelation %>%
-        arrange(-abs(Combined_zscore)) %>%
-        head(n=10)
-
-
-      if(correlationType == "all"){
-        top_anti_up = upAntiRelation %>%
-            arrange(-abs(Combined_zscore)) %>%
-            head(n=10)
-      
-        top_anti_down = downAntiRelation %>%
-          arrange(-abs(Combined_zscore)) %>%
-          head(n=10)      
-      }
-
-      
-      ylab = gsub("DB_fc_","",col)
-      ylab = gsub("_vs_"," vs ", ylab)
-      ylab = paste0(config$assay," log2FC\n ( ",ylab," )")
-      
-      
-      geom_x_lbl = "Correlated with gene up-regulation"
-      geom_y_lbl = "Correlated with gene down-regulation"
-
-      if(correlationType == "anticorrelated"){
-
-        geom_x_lbl = "Anti-correlated with gene up-regulation"
-        geom_y_lbl = "Anti-correlated with gene down-regulation"
-
-      }
-
-      if(correlationType == "all"){
-        geom_x_lbl = "Correlated with gene up-regulation"
-        geom_y_lbl = "Correlated with gene down-regulation"      
-
-        geom_x_lbl2 = "Anti-correlated with gene up-regulation"
-        geom_y_lbl2 = "Anti-correlated with gene down-regulation"
-      }
-
-
-      p = ggplot(df, aes_string(x = "DE_FC", y= col)) +
-            geom_point(size=1.2, color="grey80",mapping = aes(text=Text)) +
-            geom_point(data = upRelation, size=1.2, ,mapping = aes(text=Text, color=geom_x_lbl)) +
-            geom_point(data = downRelation,size=1.2,mapping = aes(text=Text, color=geom_y_lbl)) 
-
-      if(correlationType == "all"){
-        p = p +
-            geom_point(data = upAntiRelation, size=1.2, ,mapping = aes(text=Text, color=geom_x_lbl2)) +
-            geom_point(data = downAntiRelation,size=1.2,mapping = aes(text=Text, color=geom_y_lbl2)) 
-      }
-
-
-    breaks = c(geom_x_lbl, geom_y_lbl)
-    cols = c("#c63254","#005073")
-    if(correlationType == "all"){
-        breaks = c(geom_x_lbl, geom_y_lbl, geom_x_lbl2, geom_y_lbl2)    
-        cols = c("#c63254","#005073","orange","purple")
-    }
-
-    p = p + geom_hline(yintercept = c(-1,1) * log2(config$rnaFC),linetype='dashed') +
-            geom_vline(xintercept = c(-1,1) * log2(config$regionFC),linetype='dashed') +
-            scale_color_manual(name = "Relationship", 
-                                      breaks = breaks, 
-                                      values = cols,
-                                      labels = breaks) +
-            theme_bw() 
-
-    if(correlationType != "all"){
-      p =  p + ggtitle("Peak-gene pairs showing associated gene-peak interactions",
-                      subtitle = glue::glue("(Total={nrow(df)} pairs, {geom_x_lbl}={nrow(upRelation)}, {geom_y_lbl}={nrow(downRelation)})"))
-    }else{
-      p =  p + ggtitle("Peak-gene pairs showing associated gene-peak interactions",
-                      subtitle = glue::glue("(Total={nrow(df)} pairs,\n{geom_x_lbl}={nrow(upRelation)}, {geom_y_lbl}={nrow(downRelation)})\n{geom_x_lbl2}={nrow(upAntiRelation)}, {geom_y_lbl2}={nrow(downAntiRelation)})"))
-    }
-
-            
-      p = p + theme(plot.title = element_text(hjust = 0.5,size = 12, color="black"), 
-                    plot.subtitle = element_text(hjust = 0.5,size = 10, color="black"),
-                    axis.text = element_text(color="black")) +
-              xlab(glue("RNA-seq log2FC\n( {gsub('_vs_|__VS__',' vs ',config$prefix)} )")) +
-              ylab(ylab)
-            
-      p = p + geom_point(data = top_up, color="black",mapping = aes(test=Text))
-      p = p + geom_point(data = top_down, color="black",mapping = aes(test=Text))    
-      
-      p = p + ggrepel::geom_text_repel(data = top_up, aes_string(x = "DE_FC", y= col, label="gene"), color="black",size=4)
-      p = p + ggrepel::geom_text_repel(data = top_down, aes_string(x = "DE_FC", y= col, label="gene"), color="black", size=4)
-
-      if(correlationType == "all"){
-
-        p = p + geom_point(data = top_anti_up, color="black",mapping = aes(test=Text))
-        p = p + geom_point(data = top_anti_down, color="black",mapping = aes(test=Text))      
-
-        p = p + ggrepel::geom_text_repel(data = top_anti_up, aes_string(x = "DE_FC", y= col, label="gene"), color="black",size=4)
-        p = p + ggrepel::geom_text_repel(data = top_anti_down, aes_string(x = "DE_FC", y= col, label="gene"), color="black", size=4)      
-      }
-
-
-      fout = glue::glue("{dout}/{cmp}_{correlationType}_peaks.pdf")
-      ggsave(filename = fout,width = 12,height = 8,plot = p)
-      
-      fout = glue::glue("{dout}/{cmp}_{correlationType}_peaks.png")
-      ggsave(filename = fout,width = 12,height = 8,plot = p)
-          
-      ## Create interactive plot
-      plt = ggplotly(p)
-      fout = glue::glue("{dout}/{cmp}_{correlationType}_peaks.html")
-      htmlwidgets::saveWidget(plt, fout)    
+        df$Text = glue::glue("\nGene: {df$gene}\nRegion: {df$Region}\n Distance To TSS: {prettyNum(df$distanceToTSS,big.mark = ',')}bp")
         
-      return(p)
+        col = grep("DB_fc", colnames(df),value = TRUE)
+        col = grep('zscore',col,invert = TRUE,value = TRUE)
+        
+
+        if(correlationType == "correlated"){
+          upRelation = subset(df, Relationship == "Both Up")
+          downRelation = subset(df, Relationship == "Both Down")  
+        }
+
+        if(correlationType == "anticorrelated"){
+          upRelation = subset(df, Relationship == "RNA_Up CR_Down")
+          downRelation = subset(df, Relationship == "RNA_Down CR_Up")
+        }
+
+        if(correlationType == "all"){
+
+          upRelation = subset(df, Relationship == "Both Up")
+          downRelation = subset(df, Relationship == "Both Down")  
+
+          upAntiRelation = subset(df, Relationship == "RNA_Up CR_Down" )
+          downAntiRelation = subset(df, Relationship == "RNA_Down CR_Up")
+        }
+        
+        
+        top_up = upRelation %>%
+          arrange(-abs(Combined_zscore)) %>%
+          head(n=10)
+        
+        top_down = downRelation %>%
+          arrange(-abs(Combined_zscore)) %>%
+          head(n=10)
+
+
+        if(correlationType == "all"){
+          top_anti_up = upAntiRelation %>%
+              arrange(-abs(Combined_zscore)) %>%
+              head(n=10)
+        
+          top_anti_down = downAntiRelation %>%
+            arrange(-abs(Combined_zscore)) %>%
+            head(n=10)      
+        }
+
+        
+        ylab = gsub("DB_fc_","",col)
+        ylab = gsub("_vs_"," vs ", ylab)
+        ylab = paste0(config$assay," log2FC\n ( ",ylab," )")
+        
+        
+        geom_x_lbl = "Correlated with gene up-regulation"
+        geom_y_lbl = "Correlated with gene down-regulation"
+
+        if(correlationType == "anticorrelated"){
+
+          geom_x_lbl = "Anti-correlated with gene up-regulation"
+          geom_y_lbl = "Anti-correlated with gene down-regulation"
+
+        }
+
+        if(correlationType == "all"){
+          geom_x_lbl = "Correlated with gene up-regulation"
+          geom_y_lbl = "Correlated with gene down-regulation"      
+
+          geom_x_lbl2 = "Anti-correlated with gene up-regulation"
+          geom_y_lbl2 = "Anti-correlated with gene down-regulation"
+        }
+
+
+        p = ggplot(df, aes_string(x = "DE_FC", y= col)) +
+              geom_point(size=1.2, color="grey80",mapping = aes(text=Text)) +
+              geom_point(data = upRelation, size=1.2, ,mapping = aes(text=Text, color=geom_x_lbl)) +
+              geom_point(data = downRelation,size=1.2,mapping = aes(text=Text, color=geom_y_lbl)) 
+
+        if(correlationType == "all"){
+          p = p +
+              geom_point(data = upAntiRelation, size=1.2, ,mapping = aes(text=Text, color=geom_x_lbl2)) +
+              geom_point(data = downAntiRelation,size=1.2,mapping = aes(text=Text, color=geom_y_lbl2)) 
+        }
+
+
+      breaks = c(geom_x_lbl, geom_y_lbl)
+      cols = c("#c63254","#005073")
+      if(correlationType == "all"){
+          breaks = c(geom_x_lbl, geom_y_lbl, geom_x_lbl2, geom_y_lbl2)    
+          cols = c("#c63254","#005073","orange","purple")
+      }
+
+      p = p + geom_hline(yintercept = c(-1,1) * log2(config$rnaFC),linetype='dashed') +
+              geom_vline(xintercept = c(-1,1) * log2(config$regionFC),linetype='dashed') +
+              scale_color_manual(name = "Relationship", 
+                                        breaks = breaks, 
+                                        values = cols,
+                                        labels = breaks) +
+              theme_bw() 
+
+      if(correlationType != "all"){
+        p =  p + ggtitle("Peak-gene pairs showing associated gene-peak interactions",
+                        subtitle = glue::glue("(Total={nrow(df)} pairs, {geom_x_lbl}={nrow(upRelation)}, {geom_y_lbl}={nrow(downRelation)})"))
+      }else{
+        p =  p + ggtitle("Peak-gene pairs showing associated gene-peak interactions",
+                        subtitle = glue::glue("(Total={nrow(df)} pairs,\n{geom_x_lbl}={nrow(upRelation)}, {geom_y_lbl}={nrow(downRelation)})\n{geom_x_lbl2}={nrow(upAntiRelation)}, {geom_y_lbl2}={nrow(downAntiRelation)})"))
+      }
+
+              
+        p = p + theme(plot.title = element_text(hjust = 0.5,size = 12, color="black"), 
+                      plot.subtitle = element_text(hjust = 0.5,size = 10, color="black"),
+                      axis.text = element_text(color="black")) +
+                xlab(glue("RNA-seq log2FC\n( {gsub('_vs_|__VS__',' vs ',config$prefix)} )")) +
+                ylab(ylab)
+              
+        p = p + geom_point(data = top_up, color="black",mapping = aes(text=Text))
+        p = p + geom_point(data = top_down, color="black",mapping = aes(text=Text))    
+        
+        p = p + ggrepel::geom_text_repel(data = top_up, aes_string(x = "DE_FC", y= col, label="gene"), color="black",size=4)
+        p = p + ggrepel::geom_text_repel(data = top_down, aes_string(x = "DE_FC", y= col, label="gene"), color="black", size=4)
+
+        if(correlationType == "all"){
+
+          p = p + geom_point(data = top_anti_up, color="black",mapping = aes(text=Text))
+          p = p + geom_point(data = top_anti_down, color="black",mapping = aes(text=Text))      
+
+          p = p + ggrepel::geom_text_repel(data = top_anti_up, aes_string(x = "DE_FC", y= col, label="gene"), color="black",size=4)
+          p = p + ggrepel::geom_text_repel(data = top_anti_down, aes_string(x = "DE_FC", y= col, label="gene"), color="black", size=4)      
+        }
+
+
+        fout = glue::glue("{dout}/{cmp_rel}_{correlationType}_peaks.pdf")
+        ggsave(filename = fout,width = 12,height = 8,plot = p)
+        
+        fout = glue::glue("{dout}/{cmp_rel}_{correlationType}_peaks.png")
+        ggsave(filename = fout,width = 12,height = 8,plot = p)
+            
+        ## Create interactive plot
+        plt = ggplotly(p)
+        fout = glue::glue("{dout}/{cmp_rel}_{correlationType}_peaks.html")
+        htmlwidgets::saveWidget(plt, fout)
+
+        plts[[cmp_rel]] = p
+      }          
+      return(plts)
     })
 
   logger::log_info("plotCorrelatedInteractions - Saving {correlationType} plots")
   fout=glue("{config$outDir}/Objects/{config$prefix}_{correlationType}_plots.rds")
   readr::write_rds(corr_plots, fout)
-
   invisible(corr_plots)
 }
 
@@ -427,45 +423,66 @@ annotateParetoResults <- function(config, DEG_pareto_res){
   logger::log_info("annotateParetoResults - Filtering correlated interactions ... ")
 
   DEG_pareto_res_filtered_correlated = DEG_pareto_res %>%
-  imap(.f = function(lst, cmp){        
-    allGenesRes = lst[['Combined_zScores']] %>% rownames_to_column(var = "Interaction") 
-            
-    colnames(allGenesRes)[3] ='Combined_zscore'
+  imap(.f = function(lst, cmp){         
+    allGenesRes = lst[['Combined_zScores']] %>% rownames_to_column(var = "Interaction") %>% as.data.frame()       
+    rownames(allGenesRes) = allGenesRes$Interaction
 
-    #allGenesRes2[['Combined_zscore']] = allGenesRes[,2]                
-    res = subset(allGenesRes, Combined_zscore>0) # Same FC direction
+    pos_db_fc = grep("DB_fc_", colnames(allGenesRes))
+    inter_tokeep = c()
 
-    res2 = subset(res, abs(DE_FC)>= log2( config$rnaFC ) & Gene_DE_FDR  < config$FDR ) 
+    for(DB_col in pos_db_fc){
 
-    pos_db_fc = grep("DB_fc_", colnames(res2))
-    colnames(res2)[pos_db_fc] = "DB_FC"
+      cmp_rel = gsub("DB_fc_","",colnames(allGenesRes)[DB_col])
+      cli::cli_h3(cmp_rel)
 
-    res2 = subset(res2, abs(DB_FC) >= log2( config$regionFC) &  Region_FDR < config$FDR)
+      pos = which(allGenesRes[[glue("Combined.zscore.{cmp_rel}")]] > 0)
+      res = subset(allGenesRes[pos,], abs(DE_FC)>= log2( config$rnaFC ) & Gene_DE_FDR  < config$FDR ) 
+      res3 = res
+      colnames(res3) = gsub("__VS__","_vs_", colnames(res3))      
+      colnames(res3)[DB_col] = "DB_FC"
+        
+      res3 = res3 %>% dplyr::select("Interaction","DE_FC","DB_FC", contains(cmp_rel)) 
+      colnames(res3)[grep("FDR",colnames(res3))] = "Region_FDR"
 
-    if(nrow(res2) == 0){
-        return(res2)
+      res3 = subset(res3, abs(DB_FC) >= log2( config$regionFC) &  Region_FDR < config$FDR)
+
+      if(nrow(res3) == 0){
+          return(res3)
+      }
+
+      max_cor  = split(res, res$gene) %>%
+        imap(.f= function(df,gene){        
+          reg_score= exp(-( (4 * df$distanceToTSS/100e3) ) )
+          df$RegScore = -df[[glue("Combined.zscore.{cmp_rel}")]] * reg_score
+          
+          df = subset(df, RegScore >= median(df$RegScore))
+          return(df)
+        }) %>%
+        do.call(what = "rbind")
+      
+      
+      res3_bothUp = subset(res3, DE_FC > 0)
+      res3_bothDown = subset(res3, DE_FC < 0) 
+      
+      cmp_rel = glue("Relationship_{cmp_rel}")
+      allGenesRes[[cmp_rel]] = 'NONE'
+
+      if(nrow(res3_bothUp)>0){
+        pos = intersect(max_cor$Interaction, res3_bothUp$Interaction)       
+        allGenesRes[pos,][[cmp_rel]] = "Both Up"
+      }
+      
+      if(nrow(res3_bothDown) > 0){
+        pos = intersect(max_cor$Interaction, res3_bothDown$Interaction)        
+        allGenesRes[pos,][[cmp_rel]] = "Both Down"
+      }      
+
+      inter_tokeep = c(inter_tokeep, res3$Interaction)
     }
 
-    max_cor  = split(res, res$gene) %>%
-      imap(.f= function(df,gene){        
-        reg_score= exp(-( (4 * df$distanceToTSS/100e3) ) )
-        df$RegScore =df$Combined_zscore * reg_score
-        
-        df = subset(df, RegScore >= median(df$RegScore))
-        return(df)
-      }) %>%
-      do.call(what = "rbind")
-    
-    
-    res2_bothUp = subset(res2, DE_FC > 0)
-    res2_bothDown = subset(res2, DE_FC < 0) 
-    
-    max_cor$Relationship = 'NONE'
-  
-    max_cor$Relationship[max_cor$Interaction %in% res2_bothUp$Interaction ] = "Both Up"
-    max_cor$Relationship[max_cor$Interaction %in% res2_bothDown$Interaction ] = "Both Down"
-    
-    return(max_cor)
+    allGenesRes = allGenesRes[unique(inter_tokeep),]
+    rownames(allGenesRes)=NULL
+    return(allGenesRes)
   })
 
 
@@ -473,63 +490,105 @@ annotateParetoResults <- function(config, DEG_pareto_res){
 
   DEG_pareto_res_filtered_anticorrelated = DEG_pareto_res %>%
     imap(.f = function(lst, cmp){
-      allGenesRes = lst[['Combined_zScores']] %>% rownames_to_column(var = "Interaction") 
+      allGenesRes = lst[['Combined_zScores']] %>% rownames_to_column(var = "Interaction") %>% as.data.frame()
 
-      colnames(allGenesRes)[3] ='Combined_zscore'                      
-      
-      res = subset(allGenesRes, Combined_zscore < 0) # different FC direction
-      res2 = subset(res,  abs(DE_FC)>= log2( config$rnaFC ) & Gene_DE_FDR  < config$FDR ) 
+      rownames(allGenesRes) = allGenesRes$Interaction            
+      pos_db_fc = grep("DB_fc_", colnames(allGenesRes))
 
-      pos_db_fc = grep("DB_fc_", colnames(res2))
-      colnames(res2)[pos_db_fc] = "DB_FC"
-      
-      res2 = subset(res2, abs(DB_FC) >= log2( config$regionFC) &  Region_FDR < config$FDR)
+      inter_tokeep <- c()
+      for(DB_col in pos_db_fc){
+        
+        cmp_rel = gsub("DB_fc_","",colnames(allGenesRes)[DB_col])
+        cli::cli_h3(cmp_rel)
+        pos = which(allGenesRes[[glue("Combined.zscore.{cmp_rel}")]] < 0)
 
-      if(nrow(res2) == 0){
-        return(res2)
+        res = subset(allGenesRes[pos,], abs(DE_FC)>= log2( config$rnaFC ) & Gene_DE_FDR  < config$FDR ) 
+        res3 = res
+        colnames(res3) = gsub("__VS__","_vs_", colnames(res3))
+        colnames(res3)[DB_col] = "DB_FC"
+              
+
+        res3 = res3 %>% dplyr::select("Interaction","DE_FC","DB_FC", contains(cmp_rel)) 
+        colnames(res3)[grep("FDR",colnames(res3))] = "Region_FDR"
+        res3 = subset(res3, abs(DB_FC) >= log2( config$regionFC) &  Region_FDR < config$FDR)
+
+        if(nrow(res3) == 0){
+          return(res3)
+        }
+        
+        max_cor  = split(res, res$gene) %>%
+          imap(.f= function(df,gene){          
+            reg_score = exp(-( (4 * df$distanceToTSS/100e3) ) )
+            df$RegScore = -df[[glue("Combined.zscore.{cmp_rel}")]] * reg_score
+            df = subset(df, RegScore >= median(df$RegScore))
+            return(df)
+          }) %>%
+          do.call(what = "rbind")
+        
+        
+        res3_UpDown = subset(res3, DE_FC > 0)
+        res3_DownUp = subset(res3, DE_FC < 0) 
+        
+        cmp_rel = glue("Relationship_{cmp_rel}")
+        allGenesRes[[cmp_rel]] = 'NONE'        
+
+        if(nrow(res3_UpDown)>0){
+          pos = intersect(max_cor$Interaction, res3_UpDown$Interaction)
+          allGenesRes[pos,][[cmp_rel]] = "RNA_Up ChIP_Down"
+        }      
+        
+        if(nrow(res3_DownUp)>0){
+          pos = intersect(max_cor$Interaction, res3_DownUp$Interaction)
+          allGenesRes[pos,][[cmp_rel]] = "RNA_Down ChIP_Up"      
+        }    
+
+        inter_tokeep = c(inter_tokeep, res3$Interaction)          
       }
       
-      max_cor  = split(res, res$gene) %>%
-        imap(.f= function(df,gene){          
-          reg_score= exp(-( (4 * df$distanceToTSS/100e3) ) )
-          df$RegScore = -df$Combined_zscore * reg_score
-          df = subset(df, RegScore >= median(df$RegScore))
-          return(df)
-        }) %>%
-        do.call(what = "rbind")
-      
-      
-      res2_UpDown = subset(res2, DE_FC > 0)
-      res2_DownUp = subset(res2, DE_FC < 0) 
-      
-      max_cor$Relationship = 'NONE'
-    
-      max_cor$Relationship[max_cor$Interaction %in% res2_UpDown$Interaction] = "RNA_Up CR_Down"
-      max_cor$Relationship[max_cor$Interaction %in% res2_DownUp$Interaction] = "RNA_Down CR_Up"      
-      return(max_cor)
+      allGenesRes = allGenesRes[unique(inter_tokeep),]
+      rownames(allGenesRes) = NULL
+      return(allGenesRes)
     })
 
   ## Aggregate results 
   for(cmp in names(DEG_pareto_res)){
-
-    DEG_pareto_res[[cmp]][["Combined_zScores"]]$Relationship = "NONE"
+    
     if(nrow(DEG_pareto_res_filtered_anticorrelated[[cmp]]) > 0){    
-      DEG_pareto_res[[cmp]][["Combined_zScores"]][ DEG_pareto_res_filtered_anticorrelated[[cmp]]$Interaction, ]$Relationship = DEG_pareto_res_filtered_anticorrelated[[cmp]]$Relationship
+
+      df_rel = DEG_pareto_res_filtered_anticorrelated[[cmp]] %>% dplyr::select(starts_with("Relationship"))
+      for(cl in colnames(df_rel)){
+        DEG_pareto_res[[cmp]][["Combined_zScores"]][[cl]]  = "NONE"
+        DEG_pareto_res[[cmp]][["Combined_zScores"]][ DEG_pareto_res_filtered_anticorrelated[[cmp]]$Interaction, ][[cl]] = df_rel[[cl]]
+      }      
     }
 
     if(nrow(DEG_pareto_res_filtered_correlated[[cmp]]) > 0 ){
-      DEG_pareto_res[[cmp]][["Combined_zScores"]][ DEG_pareto_res_filtered_correlated[[cmp]]$Interaction, ]$Relationship = DEG_pareto_res_filtered_correlated[[cmp]]$Relationship
-    }    
 
+      df_rel = DEG_pareto_res_filtered_correlated[[cmp]] %>% dplyr::select(starts_with("Relationship"))
+
+      for(cl in colnames(df_rel)){
+        if(!cl %in% colnames(DEG_pareto_res[[cmp]][["Combined_zScores"]]) ){
+          DEG_pareto_res[[cmp]][["Combined_zScores"]][[cl]]  = "NONE"
+        }
+        DEG_pareto_res[[cmp]][["Combined_zScores"]][ DEG_pareto_res_filtered_correlated[[cmp]]$Interaction, ][[cl]] = df_rel[[cl]]
+      }                   
+    }    
   }
   
-
   fout=glue("{config$outDir}/Objects/{config$prefix}_correlated_anticorrelated_res.rds")
   logger::log_info("annotateParetoResults - Saving results to {fout}")
 
   readr::write_rds(DEG_pareto_res, fout)
   logger::log_info("{symbol$tick} annotateParetoResults - DONE!")
   return(DEG_pareto_res)
+}
+
+
+GRangesToString = function (grange, sep = c(":", "-"))
+{
+    regions <- paste0(as.character(x = seqnames(x = grange)),
+        sep[[1]], start(x = grange), sep[[2]], end(x = grange))
+    return(regions)
 }
 
 
@@ -549,7 +608,7 @@ annotateParetoResults <- function(config, DEG_pareto_res){
 #' @examples
 paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10){
 
-  DE_res$zscore = DE_res$log2FC/stats::sd(DE_res$log2FC)
+  DE_res$zscore = DE_res$logFC/stats::sd(DE_res$logFC)
 
   chip_zscore = apply(chip_fc,2,function(fc) fc/stats::sd(fc))
 
@@ -568,14 +627,12 @@ paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10
 
   logger::log_info("Calculating peak-genes combined scores")
 
-  pb = progress_estimated(length(smp_ovp_lst))
-
   peaksCorrelation = smp_ovp_lst %>%
     imap(.f = function(df,id){
       peaks = repro_peaks.GR[df$subjectHits]
 
       expr_fc = DE_res$zscore[as.numeric(id)]
-      regions = Signac::GRangesToString(peaks,sep = c(":","-"))
+      regions = GRangesToString(peaks)
 
       gene.gr = gns[gns$fixed_names == rownames(DE_res)[as.numeric(id)] ]
 
@@ -590,8 +647,8 @@ paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10
       }
 
       cors <- (expr_fc * chip_z) %>%  data.frame() %>%  rownames_to_column(var = "Region") %>%  mutate(gene =  rownames(DE_res)[as.numeric(id)])
-      #cors = cors[,-2]
-      #colnames(cors)[2] = gsub("_1$","",colnames(cors)[2])
+      pos = which(colnames(cors) %in% colnames(chip_z))
+      colnames(cors)[pos] = glue("Combined.zscore.{colnames(chip_z)}")
 
       if(length(df$subjectHits)==1){
         chip_fc2 = matrix(chip_fc[df$subjectHits, ], nrow=1)
@@ -609,19 +666,17 @@ paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10
       colnames(DB_FDRs) = glue("Region_{colnames(DB_FDRs)}")
       ## add more info to the results
       rpos = match(cors$Region, DB_df$Region)
-      
-      cors$DE_FC = DE_res$log2FC[as.numeric(id)]
+
+      combined_zscores = expr_fc * chip_z
+
+      cors$DE_FC = DE_res$logFC[as.numeric(id)]
       cors$Gene_DE_FDR= DE_res$FDR[as.numeric(id)]
       cors$DE_FC.zscore = expr_fc
-      cors = cbind(cors, DB_df[pos,])
-      #cors$Region_FDR = DB_df$FDR[rpos]  
-      #cors$Region_Regulation =  DB_df$Regulation[rpos]    
-      #cors$FeatureAssignment =  DB_df$FeatureAssignment[rpos]    
+      cors = cbind(cors, DB_df[rpos,])       
       cors = cbind(cors, chip_fc2)
       cors = cbind(cors, chip_z)
       cors$distanceToTSS = d
-
-      pb$tick()$print()
+      colnames(cors) = gsub("__VS__","_vs_", colnames(cors))
       return( cors)
     })
 
@@ -632,15 +687,7 @@ paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10
   conditions <- list(correlated = rep("high",ncol(chip_fc)),
                      anticorrelated = rep("low",ncol(chip_fc))
   )
-
-  if(!is.null(custom_cond)){
-    if(length(custom_cond) != ncol(chip_fc)){
-      cli::cli_abort("Please provide a condition list that have the same size are the signals.")
-    }
-    conditions[['custom']] = custom_cond
-  }
-
-
+  
   res = peaksCorrelation
 
   ret <- list()
@@ -673,25 +720,13 @@ paretoCorr <- function(DE_res, chip_fc, DB_df, gns, custom_cond=NULL, nlevels=10
     if(length(unique(conditions[[cnd]])) >1){
       tbl = table(conditions[[cnd]])
       touse = names(tbl)[tbl==1]
-      p.touse = which(conditions[[cnd]] == touse)
-
-      # if(length(touse) ==1 & touse == "low"){
-      #   pos = which(psel_res[[p.touse]] < 0)
-      # }else{
-      #   pos = which(psel_res[[p.touse]] > 0)
-      # }
-      # psel_res = psel_res[pos,]
+      p.touse = which(conditions[[cnd]] == touse)     
     }
 
     ret[[cnd]] = psel_res
   }
-
-  tokeep = grep("_2$", colnames(res), invert = TRUE)
-
-  res = res[,tokeep]  
-  colnames(res) = gsub("_1$","", colnames(res))
-  colnames(res)[2] = glue("Combined.zscore.{colnames(res)[2]}")
-  ret[['Combined_zScores']] = res
+  
+  ret[['Combined_zScores']] = res 
   return(ret)
 }
 
@@ -740,13 +775,8 @@ doParetoAnalysis <- function(config){
   Peaks_FC = DB_dfs[[cmpName]] %>% dplyr::select(starts_with("Log2FC")) %>% data.matrix()
   colnames(Peaks_FC) = gsub("Log2FC.","",colnames(Peaks_FC),  ignore.case = TRUE)
   rownames(Peaks_FC) = DB_dfs[[cmpName]]$Region
-
-  #for(cmp in names(DB_dfs)){ 
-  #  Peaks_FC[,cmp] = DB_dfs[[cmp]]$log2FC
-  #}
-
   colnames(Peaks_FC) = gsub("__VS__","_vs_",colnames(Peaks_FC))
-
+  Peaks_FC[is.na(Peaks_FC)] = 0
 
   DEG_pareto_res <- list()
 
@@ -785,6 +815,8 @@ doParetoAnalysis <- function(config){
   DEG = DEG[pos,]
   
   logger::log_info("Running integrative analysis for {cmpName}")
+
+
   parRes = paretoCorr(DE_res = DEG, 
             chip_fc= Peaks_FC,
             DB_df = DB_dfs[[cmpName]],
@@ -845,10 +877,16 @@ SaveResults <- function(config, results){
   wb <- createWorkbook()
   addWorksheet(wb = wb,sheetName = "DEG_DB_association")
 
-  cols1 = c("Interaction","Region","FeatureAssignment","Region_Regulation","gene","distanceToTSS","Relationship")
-  othercols = setdiff(colnames(res), cols1)
-  res = res[,c(cols1, othercols)]
+  rel_cols = grep("Relationship",colnames(res),value = TRUE)
+  combz_cols = grep("Combined.zscore",colnames(res),value = TRUE)
+  db_fc_cols = grep("DB_fc_.",colnames(res),value = TRUE)
+  db_fdr_cols = grep("FDR.",colnames(res),value = TRUE)
+  db_zscore_cols = grep("DB.zscore.",colnames(res),value = TRUE)
 
+
+  cols1 = c("Interaction","Region","gene","distanceToTSS",rel_cols,combz_cols, "DE_FC","Gene_DE_FDR","DE_FC.zscore",db_fc_cols,db_fdr_cols,db_zscore_cols)
+  res = res[,cols1]
+  
   writeDataTable(wb,
                   sheet = 1,
                   x = res,
@@ -856,7 +894,14 @@ SaveResults <- function(config, results){
                   bandedCols = F,
                   bandedRows = F)
 
-  col_groups = list(1:6,7,8, 9:11, 12:14)
+  col_groups = list(which(cols1 %in% c("Interaction","Region","gene","distanceToTSS")),
+                    which(cols1 %in% rel_cols),
+                    which(cols1 %in% combz_cols),
+                    which(cols1 %in% c("DE_FC","Gene_DE_FDR","DE_FC.zscore")),
+                    which(cols1 %in% db_fc_cols),
+                    which(cols1 %in% db_fdr_cols),
+                    which(cols1 %in% db_zscore_cols)
+                    )
   
   for(i in 1:length(col_groups)){
     
